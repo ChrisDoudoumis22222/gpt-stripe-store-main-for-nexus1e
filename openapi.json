@@ -1,1 +1,93 @@
-[]
+{
+    "openapi": "3.0.0",
+    "info": {
+      "title": "FastAPI",
+      "version": "0.1.0"
+    },
+    "servers": [
+      {
+        "url": "https://gpt-stripe-store-main-for-nexus1e-git-main-christoss-projects.vercel.app/",
+        "description": "Production environment"
+      }
+    ],
+    "paths": {
+      "/getColorByMood": {
+        "get": {
+          "summary": "Get Color By Mood",
+          "description": "Get a color based on the mood.",
+          "operationId": "get_color_by_mood_get",
+          "parameters": [
+            {
+              "name": "mood",
+              "in": "query",
+              "description": "The mood for which to return the associated color.",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "mood": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "Mood not found",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "detail": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/": {
+        "get": {
+          "summary": "Health Check",
+          "description": "Health check endpoint to verify the API is live.",
+          "operationId": "health_check_get",
+          "responses": {
+            "200": {
+              "description": "Successful Response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "message": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
