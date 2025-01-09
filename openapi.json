@@ -6,7 +6,7 @@
     },
     "servers": [
       {
-        "url": "https://gpt-stripe-store-main-for-nexus1e-git-main-christoss-projects.vercel.app/",
+        "url": "https://gpt-stripe-store-main-for-nexus1e.vercel.app/",
         "description": "Production environment"
       }
     ],
@@ -92,13 +92,68 @@
       "/webhook/stripe": {
         "post": {
           "summary": "Stripe Webhook",
+          "description": "Handles Stripe webhook events such as `checkout.session.async_payment_succeeded`.",
           "operationId": "webhook_received_webhook_stripe_post",
           "requestBody": {
+            "description": "Stripe Webhook Event Data",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Unique identifier for the webhook event"
+                    },
+                    "object": {
+                      "type": "string",
+                      "description": "The object type, typically `webhook_endpoint`"
+                    },
+                    "api_version": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "API version used to trigger the webhook"
+                    },
+                    "application": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Application ID associated with the webhook, if any"
+                    },
+                    "created": {
+                      "type": "integer",
+                      "description": "Timestamp when the webhook was created"
+                    },
+                    "description": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Description of the webhook endpoint"
+                    },
+                    "enabled_events": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "List of events this webhook listens to"
+                    },
+                    "livemode": {
+                      "type": "boolean",
+                      "description": "Indicates whether the webhook is in live mode"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "description": "Additional metadata attached to the webhook"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "The status of the webhook, e.g., `enabled`"
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "The URL of the webhook endpoint"
+                    }
+                  },
+                  "required": ["id", "object", "enabled_events", "status", "url"]
                 }
               }
             },
@@ -106,14 +161,39 @@
           },
           "responses": {
             "200": {
-              "description": "Webhook Processed Successfully",
+              "description": "Webhook Event Processed Successfully",
               "content": {
                 "application/json": {
                   "schema": {
                     "type": "object",
                     "properties": {
                       "status": {
-                        "type": "string"
+                        "type": "string",
+                        "example": "success"
+                      },
+                      "message": {
+                        "type": "string",
+                        "example": "Webhook event processed successfully"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Bad Request",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "example": "error"
+                      },
+                      "message": {
+                        "type": "string",
+                        "example": "Invalid webhook payload"
                       }
                     }
                   }
