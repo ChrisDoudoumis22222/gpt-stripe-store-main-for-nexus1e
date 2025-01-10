@@ -1,6 +1,3 @@
-#!/usr/bin/env python3.11
-# Python 3.11 or newer required.
-
 import json
 import stripe
 import redis.asyncio as redis
@@ -8,8 +5,9 @@ from fastapi import FastAPI, Request, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
+from starlette.middleware import Middleware
+from starlette.responses import RedirectResponse
 import logging
-import uvicorn
 from typing import Optional
 import aiofiles
 
@@ -17,28 +15,24 @@ import aiofiles
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuration
+# Configuration (replace with actual keys)
 STRIPE_API_KEY = "sk_test_51Pn9MbDo5uWbWPXU81NQmpueBJo8XjS9NCxpxt6Z2rVNPysIZ2mR7dUZgYZvdVwq5mHOkauc89LOdfvw1zf2n2Xu00eerSOuqR"
 STRIPE_ENDPOINT_SECRET = "whsec_c5lc8jr7ijEbaMgegU5wVpt1BuQ53mKz"
 STRIPE_PAYMENT_LINK = "https://buy.stripe.com/test_aEUeYSdZEaR9b7O288"
-REDIS_URL = "redis://localhost:6379"
+REDIS_URL = "redis://default:m3S2jrjbheJx1HUHuqkhQ8QGWyQpJTB0@redis-15159.c243.eu-west-1-3.ec2.redns.redis-cloud.com:15159"
 
 stripe.api_key = STRIPE_API_KEY
 
 # Initialize FastAPI
+middleware = [
+    Middleware(BaseHTTPMiddleware, dispatch=lambda request, call_next: call_next(request))
+]
 app = FastAPI(
     title="Crypto Advisor Payment API",
     description="API to manage subscription payments for the Crypto Advisor platform.",
     version="1.0.0",
+    middleware=middleware
 )
-
-# Middleware to preserve raw request body
-class RawBodyMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: StarletteRequest, call_next):
-        request.state.body = await request.body()
-        return await call_next(request)
-
-app.add_middleware(RawBodyMiddleware)
 
 # Redis connection
 redis_client: Optional[redis.Redis] = None
@@ -124,12 +118,16 @@ async def privacy():
     Serve the privacy policy HTML content.
     """
     try:
-        async with aiofiles.open("privacy_policy.html", "r") as file:
+        async with aiofiles.open("./api/privacy_policy.html", "r") as file:
             content = await file.read()
         return HTMLResponse(content=content)
     except FileNotFoundError:
         logger.error("Privacy policy file not found")
         raise HTTPException(status_code=404, detail="Privacy policy file not found")
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.get("/", summary="Root Redirect")
+async def root():
+    """
+    Redirect to OpenAPI docs by default.
+    """
+    return RedirectResponse(url="/docs")
