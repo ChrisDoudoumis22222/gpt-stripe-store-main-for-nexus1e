@@ -1,55 +1,77 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, Request, HTTPException
+from pydantic import BaseModel
 import stripe
-from sqlalchemy import create_engine, Column, String, Float, Enum
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 
-# Flask App Setup
-app = Flask(__name__)
+# FastAPI app instance
+app = FastAPI()
 
-# Stripe API Setup
+# Stripe setup
 stripe.api_key = "sk_test_51Pn9MbDo5uWbWPXU81NQmpueBJo8XjS9NCxpxt6Z2rVNPysIZ2mR7dUZgYZvdVwq5mHOkauc89LOdfvw1zf2n2Xu00eerSOuqR"
-endpoint_secret = "https://gpt-stripe-store-main-for-nexus1e.vercel.app/webhook/stripe"  # Replace with the actual webhook secret from Stripe
+endpoint_secret = "whsec_your_secret"  # Replace with your actual webhook secret
 
-# Database Setup
-Base = declarative_base()
-engine = create_engine("sqlite:///orders.db")  # Using SQLite for simplicity
-Session = sessionmaker(bind=engine)
-db_session = Session()
+# In-memory database for demonstration (replace with a real DB)
+orders = {}
 
-# Order Model
-class Order(Base):
-    __tablename__ = "orders"
-    id = Column(String, primary_key=True)
-    status = Column(Enum("pending", "paid", "failed"), default="pending")
-    total_amount = Column(Float)
-    currency = Column(String)
+# Order model for creating new orders
+class Order(BaseModel):
+    order_id: str
+    total_amount: float
+    currency: str
 
-# Create the database tables
-Base.metadata.create_all(engine)
 
-@app.route("/webhook/stripe", methods=["POST"])
-def stripe_webhook():
-    sig = request.headers.get("stripe-signature")
-    payload = request.data
+@app.get("/openapi.json")
+def get_openapi_schema():
+    """
+    Serves the OpenAPI JSON schema
+    """
+    schema = app.openapi()
+    return schema
+
+
+@app.post("/create-order")
+async def create_order(order: Order):
+    """
+    API endpoint to create a new order
+    """
+    if order.order_id in orders:
+        return {"message": f"Order with ID {order.order_id} already exists."}
+    
+    # Save order in the database (or in-memory for now)
+    orders[order.order_id] = {
+        "status": "pending",
+        "total_amount": order.total_amount,
+        "currency": order.currency
+    }
+    return {"message": "Order created successfully", "order": orders[order.order_id]}
+
+
+@app.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    """
+    Stripe webhook to handle payment events
+    """
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
 
     try:
-        event = stripe.Webhook.construct_event(payload, sig, endpoint_secret)
-    except ValueError as e:
-        return jsonify({"error": "Invalid payload"}), 400
-    except stripe.error.SignatureVerificationError as e:
-        return jsonify({"error": "Invalid signature"}), 400
+        event = stripe.Webhook.construct_event(
+            payload=payload,
+            sig_header=sig_header,
+            secret=endpoint_secret
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
 
-    # Process webhook events
+    # Handle the event
     if event["type"] == "payment_intent.succeeded":
         payment_intent = event["data"]["object"]
         order_id = payment_intent["metadata"].get("orderId")
 
-        # Update order status to 'paid' in the database
-        order = db_session.query(Order).filter_by(id=order_id).first()
-        if order:
-            order.status = "paid"
-            db_session.commit()
+        # Update the order in the database
+        if order_id in orders:
+            orders[order_id]["status"] = "paid"
             print(f"Order {order_id} marked as paid.")
         else:
             print(f"Order {order_id} not found.")
@@ -58,42 +80,23 @@ def stripe_webhook():
         payment_intent = event["data"]["object"]
         order_id = payment_intent["metadata"].get("orderId")
 
-        # Update order status to 'failed' in the database
-        order = db_session.query(Order).filter_by(id=order_id).first()
-        if order:
-            order.status = "failed"
-            db_session.commit()
+        # Update the order in the database
+        if order_id in orders:
+            orders[order_id]["status"] = "failed"
             print(f"Order {order_id} marked as failed.")
         else:
             print(f"Order {order_id} not found.")
 
-    return jsonify({"status": "success"}), 200
+    return {"status": "success"}
 
-@app.route("/hasUserPaid/<string:order_id>", methods=["GET"])
-def has_user_paid(order_id):
-    order = db_session.query(Order).filter_by(id=order_id).first()
 
+@app.get("/has-user-paid/{order_id}")
+async def has_user_paid(order_id: str):
+    """
+    API endpoint to check if the user has paid
+    """
+    order = orders.get(order_id)
     if not order:
-        return jsonify({"hasPaid": False, "message": "Order not found"}), 404
+        raise HTTPException(status_code=404, detail="Order not found")
 
-    return jsonify({"hasPaid": order.status == "paid"})
-
-@app.route("/createOrder", methods=["POST"])
-def create_order():
-    data = request.json
-    order_id = data.get("orderId")
-    total_amount = data.get("totalAmount")
-    currency = data.get("currency")
-
-    if not all([order_id, total_amount, currency]):
-        return jsonify({"error": "Missing required fields"}), 400
-
-    # Create a new order in the database
-    new_order = Order(id=order_id, total_amount=total_amount, currency=currency, status="pending")
-    db_session.add(new_order)
-    db_session.commit()
-
-    return jsonify({"message": "Order created successfully", "orderId": order_id}), 201
-
-if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    return {"hasPaid": order["status"] == "paid", "order": order}
