@@ -14,6 +14,7 @@ load_dotenv()
 # Stripe and app setup
 stripe.api_key = "sk_test_51Pn9MbDo5uWbWPXU81NQmpueBJo8XjS9NCxpxt6Z2rVNPysIZ2mR7dUZgYZvdVwq5mHOkauc89LOdfvw1zf2n2Xu00eerSOuqR"
 endpoint_secret = "whsec_c5lc8jr7ijEbaMgegU5wVpt1BuQ53mKz"
+product_id = "we_1QfSOPDo5uWbWPXUoR9sz0kD"
 payment_link = "https://buy.stripe.com/test_aEUeYSdZEaR9b7O288"
 redis_url = "redis://default:mS32jrbheJx1HUHuqkhQ8QGWyQpJTB0@redis-15159.c243.eu-west-1-3.ec2.redns.redis-cloud.com:15159"
 app_url = "https://gpt-stripe-store-main-for-nexus1e.vercel.app/"
@@ -104,26 +105,28 @@ async def webhook_received(request: Request, stripe_signature: str = Header(None
     Handle Stripe webhook events.
     """
     try:
-        payload = request.state.body  # Access raw body from middleware
-        print("Payload:", payload)  # Debug: Log payload
+        payload = request.state.body  # Use raw body for Stripe validation
+        print("Headers:", request.headers)
+        print("Payload:", payload.decode("utf-8"))  # Debug payload
 
         event = stripe.Webhook.construct_event(
             payload=payload, sig_header=stripe_signature, secret=endpoint_secret
         )
 
-        # Process the event
+        # Handle the event
         if event["type"] == "checkout.session.completed":
-            conversation_id = event["data"]["object"]["client_reference_id"]
+            session = event["data"]["object"]
+            conversation_id = session.get("client_reference_id")
             await store_payment_status(conversation_id, "paid")
             print(f"Payment status for conversation {conversation_id} updated to 'paid'")
 
         return {"status": "success"}
 
     except stripe.error.SignatureVerificationError as e:
-        print("Signature error:", str(e))
+        print("Invalid signature:", str(e))
         raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
-        print("Error:", str(e))
+        print("Webhook error:", str(e))
         raise HTTPException(status_code=400, detail="Webhook error")
 
 
