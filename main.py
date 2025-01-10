@@ -4,6 +4,9 @@ import aioredis
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from fastapi.openapi.utils import get_openapi
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +28,14 @@ app = FastAPI(
         },
     ]
 )
+
+# Middleware to preserve raw request body
+class RawBodyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        request.state.body = await request.body()
+        return await call_next(request)
+
+app.add_middleware(RawBodyMiddleware)
 
 # Initialize Redis connection
 redis = None
@@ -54,6 +65,23 @@ async def retrieve_paid_status(conversation_id: str):
     return await redis_conn.get(conversation_id)
 
 
+# Custom OpenAPI Schema
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="Nexus Wire API",
+        version="1.0.0",
+        description="API for managing Stripe payments and Redis-based payment status tracking.",
+        routes=app.routes,
+    )
+    app.openapi_schema = openapi_schema
+    return openapi_schema
+
+
+app.openapi = custom_openapi
+
+
 # Routes
 @app.get("/getPaymentURL")
 async def get_payment_url(openai_conversation_id: str = Header(None)):
@@ -75,21 +103,28 @@ async def webhook_received(request: Request, stripe_signature: str = Header(None
     """
     Handle Stripe webhook events.
     """
-    data = await request.body()
     try:
+        payload = request.state.body  # Access raw body from middleware
+        print("Payload:", payload)  # Debug: Log payload
+
         event = stripe.Webhook.construct_event(
-            payload=data, sig_header=stripe_signature, secret=endpoint_secret
+            payload=payload, sig_header=stripe_signature, secret=endpoint_secret
         )
+
+        # Process the event
+        if event["type"] == "checkout.session.completed":
+            conversation_id = event["data"]["object"]["client_reference_id"]
+            await store_payment_status(conversation_id, "paid")
+            print(f"Payment status for conversation {conversation_id} updated to 'paid'")
+
+        return {"status": "success"}
+
+    except stripe.error.SignatureVerificationError as e:
+        print("Signature error:", str(e))
+        raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
-
-    # Process the event
-    if event["type"] == "checkout.session.completed":
-        conversation_id = event["data"]["object"]["client_reference_id"]
-        await store_payment_status(conversation_id, "paid")
-        print(f"Payment status for conversation {conversation_id} updated to 'paid'")
-
-    return {"status": "success"}
+        print("Error:", str(e))
+        raise HTTPException(status_code=400, detail="Webhook error")
 
 
 @app.get("/hasUserPaid")
