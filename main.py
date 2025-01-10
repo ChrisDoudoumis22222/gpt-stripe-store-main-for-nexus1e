@@ -25,7 +25,11 @@ REDIS_URL = "redis://localhost:6379"
 stripe.api_key = STRIPE_API_KEY
 
 # Initialize FastAPI
-app = FastAPI(title="Crypto Advisor Payment API")
+app = FastAPI(
+    title="Crypto Advisor Payment API",
+    description="API to manage subscription payments for the Crypto Advisor platform.",
+    version="1.0.0",
+)
 
 # Middleware to preserve raw request body
 class RawBodyMiddleware(BaseHTTPMiddleware):
