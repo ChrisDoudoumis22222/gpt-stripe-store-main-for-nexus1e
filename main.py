@@ -5,12 +5,13 @@ import json
 import stripe
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, Header, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 import logging
 import uvicorn
 from typing import Optional
+import aiofiles
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -68,35 +69,67 @@ async def get_user_id(user_id: Optional[str] = Header(None)) -> str:
     return user_id
 
 # Routes
-@app.get("/payment-link", summary="Generate Payment Link")
-async def payment_link(user_id: str = Depends(get_user_id)):
+@app.get("/getPaymentURL", summary="Generate Payment URL")
+async def get_payment_url(user_id: str = Depends(get_user_id)):
+    """
+    Generate and return a payment URL with a client_reference_id.
+    """
     url = f"{STRIPE_PAYMENT_LINK}?client_reference_id={user_id}"
-    logger.info(f"Generated payment link for {user_id}: {url}")
+    logger.info(f"Generated payment URL for {user_id}: {url}")
     return {"message": "Complete payment using the link below.", "url": url}
 
-@app.get("/check-payment", summary="Check Payment Status")
-async def check_payment(user_id: str = Depends(get_user_id)):
-    status = await retrieve_payment_status(user_id)
-    if status == "paid":
-        return {"paid": True}
-    return {"paid": False}
-
 @app.post("/webhook/stripe", summary="Handle Stripe Webhook")
-async def stripe_webhook(request: Request, stripe_signature: str = Header(...)):
+async def webhook_received(
+    request: Request, stripe_signature: str = Header(..., alias="Stripe-Signature")
+):
+    """
+    Handle Stripe webhook events.
+    """
     payload = await request.body()
     try:
-        event = stripe.Webhook.construct_event(payload, stripe_signature, STRIPE_ENDPOINT_SECRET)
+        event = stripe.Webhook.construct_event(
+            payload=payload, sig_header=stripe_signature, secret=STRIPE_ENDPOINT_SECRET
+        )
+        logger.info(f"Stripe webhook event received: {event['type']}")
+
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
             user_id = session.get("client_reference_id")
             if user_id:
                 await store_payment_status(user_id, "paid")
+                logger.info(f"Payment status for {user_id} updated to 'paid'")
+
         return JSONResponse(content={"status": "success"}, status_code=200)
-    except stripe.error.SignatureVerificationError:
+
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Invalid Stripe signature: {e}")
         raise HTTPException(status_code=400, detail="Invalid Stripe signature")
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        raise HTTPException(status_code=400, detail="Webhook error")
+        logger.error(f"Webhook processing error: {e}")
+        raise HTTPException(status_code=400, detail="Webhook processing error")
+
+@app.get("/hasUserPaid", summary="Check Payment Status")
+async def has_user_paid(user_id: str = Depends(get_user_id)):
+    """
+    Check if the user has paid based on user_id.
+    """
+    status = await retrieve_payment_status(user_id)
+    if status == "paid":
+        return {"paid": True}
+    return {"paid": False}
+
+@app.get("/privacy", response_class=HTMLResponse, summary="Privacy Policy")
+async def privacy():
+    """
+    Serve the privacy policy HTML content.
+    """
+    try:
+        async with aiofiles.open("privacy_policy.html", "r") as file:
+            content = await file.read()
+        return HTMLResponse(content=content)
+    except FileNotFoundError:
+        logger.error("Privacy policy file not found")
+        raise HTTPException(status_code=404, detail="Privacy policy file not found")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
