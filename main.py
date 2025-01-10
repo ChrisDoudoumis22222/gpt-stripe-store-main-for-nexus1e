@@ -1,102 +1,127 @@
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel
+import os
 import stripe
+import aioredis
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi.responses import HTMLResponse
 
-# FastAPI app instance
-app = FastAPI()
+# Load environment variables
+load_dotenv()
 
-# Stripe setup
+# Stripe and app setup
 stripe.api_key = "sk_test_51Pn9MbDo5uWbWPXU81NQmpueBJo8XjS9NCxpxt6Z2rVNPysIZ2mR7dUZgYZvdVwq5mHOkauc89LOdfvw1zf2n2Xu00eerSOuqR"
 endpoint_secret = "whsec_c5lc8jr7ijEbaMgegU5wVpt1BuQ53mKz"
+payment_link = "https://buy.stripe.com/test_aEUeYSdZEaR9b7O288"
+redis_url = "redis://default:mS32jrbheJx1HUHuqkhQ8QGWyQpJTB0@redis-15159.c243.eu-west-1-3.ec2.redns.redis-cloud.com:15159"
+app_url = "https://gpt-stripe-store-main-for-nexus1e.vercel.app/"
+app_name = "Nexus wire"
 
-# In-memory database for demonstration (replace with a real DB)
-orders = {}
+# Initialize FastAPI app
+app = FastAPI(
+    servers=[
+        {
+            "url": app_url,
+            "description": "Production environment",
+        },
+    ]
+)
 
-# Order model for creating new orders
-class Order(BaseModel):
-    order_id: str
-    total_amount: float
-    currency: str
+# Initialize Redis connection
+redis = None
 
 
-@app.get("/openapi.json")
-def get_openapi_schema():
+async def get_redis_connection():
+    global redis
+    if redis is None:
+        redis = await aioredis.from_url(redis_url, decode_responses=True)
+    return redis
+
+
+# Helper functions for storing and retrieving payment statuses
+async def store_payment_status(conversation_id: str, status: str):
     """
-    Serves the OpenAPI JSON schema
+    Store payment status in Redis.
     """
-    schema = app.openapi()
-    return schema
+    redis_conn = await get_redis_connection()
+    await redis_conn.set(conversation_id, status)
 
 
-@app.post("/create-order")
-async def create_order(order: Order):
+async def retrieve_paid_status(conversation_id: str):
     """
-    API endpoint to create a new order
+    Retrieve payment status from Redis.
     """
-    if order.order_id in orders:
-        return {"message": f"Order with ID {order.order_id} already exists."}
-    
-    # Save order in the database (or in-memory for now)
-    orders[order.order_id] = {
-        "status": "pending",
-        "total_amount": order.total_amount,
-        "currency": order.currency
-    }
-    return {"message": "Order created successfully", "order": orders[order.order_id]}
+    redis_conn = await get_redis_connection()
+    return await redis_conn.get(conversation_id)
+
+
+# Routes
+@app.get("/getPaymentURL")
+async def get_payment_url(openai_conversation_id: str = Header(None)):
+    """
+    Generate and return a payment URL with a client_reference_id.
+    """
+    if not openai_conversation_id:
+        raise HTTPException(
+            status_code=400, detail="Missing openai-conversation-id header"
+        )
+
+    # Generate the payment link
+    url = f"{payment_link}?client_reference_id={openai_conversation_id}"
+    return f"Tell the user to click here: {url}, and type 'continue' when they're done."
 
 
 @app.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
+async def webhook_received(request: Request, stripe_signature: str = Header(None)):
     """
-    Stripe webhook to handle payment events
+    Handle Stripe webhook events.
     """
-    payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
-
+    data = await request.body()
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,
-            sig_header=sig_header,
-            secret=endpoint_secret
+            payload=data, sig_header=stripe_signature, secret=endpoint_secret
         )
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid payload")
-    except stripe.error.SignatureVerificationError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
 
-    # Handle the event
-    if event["type"] == "payment_intent.succeeded":
-        payment_intent = event["data"]["object"]
-        order_id = payment_intent["metadata"].get("orderId")
-
-        # Update the order in the database
-        if order_id in orders:
-            orders[order_id]["status"] = "paid"
-            print(f"Order {order_id} marked as paid.")
-        else:
-            print(f"Order {order_id} not found.")
-
-    elif event["type"] == "payment_intent.payment_failed":
-        payment_intent = event["data"]["object"]
-        order_id = payment_intent["metadata"].get("orderId")
-
-        # Update the order in the database
-        if order_id in orders:
-            orders[order_id]["status"] = "failed"
-            print(f"Order {order_id} marked as failed.")
-        else:
-            print(f"Order {order_id} not found.")
+    # Process the event
+    if event["type"] == "checkout.session.completed":
+        conversation_id = event["data"]["object"]["client_reference_id"]
+        await store_payment_status(conversation_id, "paid")
+        print(f"Payment status for conversation {conversation_id} updated to 'paid'")
 
     return {"status": "success"}
 
 
-@app.get("/has-user-paid/{order_id}")
-async def has_user_paid(order_id: str):
+@app.get("/hasUserPaid")
+async def has_user_paid(openai_conversation_id: str = Header(None)):
     """
-    API endpoint to check if the user has paid
+    Check if the user has paid based on conversation ID.
     """
-    order = orders.get(order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+    if not openai_conversation_id:
+        raise HTTPException(
+            status_code=400, detail="Missing openai-conversation-id header"
+        )
 
-    return {"hasPaid": order["status"] == "paid", "order": order}
+    paid_status = await retrieve_paid_status(openai_conversation_id)
+    return {"paid": paid_status == "paid"}
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy():
+    """
+    Serve the privacy policy HTML content.
+    """
+    try:
+        with open("privacy_policy.html", "r") as file:
+            privacy_policy_content = file.read()
+        # Replace the app name placeholder
+        privacy_policy_content = privacy_policy_content.replace("{{app_name}}", app_name)
+        return privacy_policy_content
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Privacy policy file not found")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)
