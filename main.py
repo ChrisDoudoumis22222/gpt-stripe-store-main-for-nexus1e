@@ -99,7 +99,7 @@ async def retrieve_paid_status(conversation_id: str) -> Optional[str]:
     logger.debug(f"Retrieved payment status for {conversation_id}: {status}")
     return status
 
-# Custom OpenAPI Schema
+# Custom OpenAPI Schema with Servers Included
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -108,6 +108,7 @@ def custom_openapi():
         version=app.version,
         description=app.description,
         routes=app.routes,
+        servers=app.servers,  # Include servers here
     )
     app.openapi_schema = openapi_schema
     return openapi_schema
@@ -188,14 +189,14 @@ async def webhook_received(
         logger.error(f"Webhook processing error: {e}")
         raise HTTPException(status_code=400, detail="Webhook processing error")
 
-@app.get("/hasUserPaid", summary="Check Payment Status")
-async def has_user_paid(conversation_id: str = Depends(get_conversation_id)):
+@app.get("/hasUserPaid/{order_id}", summary="Check Payment Status")
+async def has_user_paid(order_id: str):
     """
-    Check if the user has paid based on conversation ID.
+    Check if the user has paid based on order ID.
     """
-    paid_status = await retrieve_paid_status(conversation_id)
+    paid_status = await retrieve_paid_status(order_id)
     is_paid = paid_status == "paid"
-    logger.info(f"Payment status for {conversation_id}: {'paid' if is_paid else 'not paid'}")
+    logger.info(f"Payment status for {order_id}: {'paid' if is_paid else 'not paid'}")
     return {"paid": is_paid}
 
 @app.get("/privacy", response_class=HTMLResponse, summary="Privacy Policy")
