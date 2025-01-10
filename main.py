@@ -7,7 +7,7 @@ app = FastAPI()
 
 # Stripe setup
 stripe.api_key = "sk_test_51Pn9MbDo5uWbWPXU81NQmpueBJo8XjS9NCxpxt6Z2rVNPysIZ2mR7dUZgYZvdVwq5mHOkauc89LOdfvw1zf2n2Xu00eerSOuqR"
-endpoint_secret = "whsec_your_secret"  # Replace with your actual webhook secret
+endpoint_secret = "https://gpt-stripe-store-main-for-nexus1e.vercel.app/webhook/stripe"  # Replace with your actual webhook secret
 
 # In-memory database for demonstration (replace with a real DB)
 orders = {}
